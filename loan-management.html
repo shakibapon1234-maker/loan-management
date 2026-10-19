@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>লোন ম্যানেজমেন্ট</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--tx:#1b2430;--mut:#6b7686;--bd:#dde3ec;--pri:#1d5fd1;--red:#c62828;--grn:#1b873f}
+@media(prefers-color-scheme:dark){:root{--bg:#12161c;--card:#1b212a;--tx:#e8edf3;--mut:#93a0b2;--bd:#2c3542;--pri:#5b9bff;--red:#ff6b6b;--grn:#4cd17d}}
+*{box-sizing:border-box}body{margin:0;font-family:"Hind Siliguri","Noto Sans Bengali",system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;background:var(--card);border-bottom:1px solid var(--bd)}
+h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 10px}
+main{max-width:1200px;margin:auto;padding:16px;display:grid;grid-template-columns:340px 1fr;gap:16px}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:16px}
+input,textarea,button{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:8px 10px;width:100%}
+label{font-size:12px;color:var(--mut);display:block;margin:8px 0 3px}
+button{width:auto;cursor:pointer;background:var(--pri);color:#fff;border:0}button.s{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}button.d{background:var(--red)}
+.row{display:flex;gap:8px}.row>*{flex:1}.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}.bar input{flex:1;min-width:140px}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}td.n{white-space:normal;min-width:120px}th{color:var(--mut);font-weight:600;font-size:12px}
+.r{text-align:right}.pos{color:var(--grn)}.neg{color:var(--red)}
+.p{padding:9px;border-radius:7px;cursor:pointer;display:flex;justify-content:space-between;border:1px solid transparent}.p:hover,.p.on{background:var(--bg);border-color:var(--bd)}
+.sum{display:flex;gap:10px;flex-wrap:wrap}.sum div{flex:1;min-width:110px;background:var(--bg);border-radius:8px;padding:10px}.sum b{display:block;font-size:18px}
+#auth,#setup{max-width:480px;margin:40px auto}pre{background:var(--bg);padding:10px;border-radius:7px;overflow:auto;font-size:12px}
+.m{color:var(--mut);font-size:12px}.hide{display:none}
+</style>
+</head>
+<body>
+<div id="setup" class="card hide">
+  <h2>১) Supabase কানেক্ট করুন</h2>
+  <p class="m">Supabase → Project Settings → API থেকে Project URL ও anon public key দিন।</p>
+  <label>Project URL</label><input id="cu" placeholder="https://xxxx.supabase.co">
+  <label>Anon public key</label><input id="ck">
+  <p><button onclick="saveCfg()">সেভ করুন</button></p>
+  <h2>২) টেবিল তৈরি (একবারই)</h2>
+  <p class="m">Supabase → SQL Editor-এ নিচের কোড Run করুন:</p>
+  <pre id="sql"></pre>
+</div>
+
+<div id="auth" class="card hide">
+  <h2>লগইন / সাইনআপ</h2>
+  <label>ইমেইল</label><input id="em" type="email">
+  <label>পাসওয়ার্ড</label><input id="pw" type="password">
+  <p class="row"><button onclick="login()">লগইন</button><button class="s" onclick="signup()">নতুন অ্যাকাউন্ট</button></p>
+  <p class="m" id="am"></p><p class="m"><a href="#" onclick="resetCfg();return false">Supabase সেটিং পরিবর্তন</a></p>
+</div>
+
+<div id="app" class="hide">
+<header><h1>💰 লোন ম্যানেজমেন্ট</h1><div><span class="m" id="ue"></span> <button class="s" onclick="logout()">লগআউট</button></div></header>
+<main>
+  <section>
+    <div class="card">
+      <h2 id="ft">নতুন লেনদেন</h2>
+      <label>নাম</label><input id="fn" list="names" placeholder="ব্যক্তির নাম"><datalist id="names"></datalist>
+      <label>তারিখ</label><input id="fd" type="date">
+      <div class="row"><div><label>লোন নিয়েছি (Taken)</label><input id="ft2" type="number" min="0" step="any" placeholder="0"></div>
+      <div><label>লোন দিয়েছি (Given)</label><input id="fg" type="number" min="0" step="any" placeholder="0"></div></div>
+      <label>নোট</label><textarea id="fo" rows="2"></textarea>
+      <p class="row"><button onclick="saveTxn()">সেভ</button><button class="s" onclick="clearForm()">ক্লিয়ার</button></p>
+      <p class="m" id="fm"></p>
+    </div>
+    <div class="card">
+      <h2>ব্যক্তি তালিকা</h2>
+      <input id="ps" placeholder="🔍 নাম সার্চ করুন" oninput="render()">
+      <div id="plist" style="margin-top:8px"></div>
+    </div>
+  </section>
+  <section>
+    <div class="card"><div class="sum" id="sum"></div></div>
+    <div class="card">
+      <div class="bar"><h2 id="tt" style="margin:0;flex:2">সব লেনদেন</h2>
+        <button class="s" onclick="sel=null;render()">সব দেখুন</button>
+        <button onclick="dl(true)">⬇ এই ব্যক্তির CSV</button>
+        <button class="s" onclick="dl(false)">⬇ সব CSV</button></div>
+      <div class="tw"><table><thead><tr><th>তারিখ</th><th>নাম</th><th class="r">লোন নিয়েছি</th><th class="r">লোন দিয়েছি</th><th class="r">ব্যালেন্স</th><th>নোট</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+      <p class="m">ব্যালেন্স = লোন দিয়েছি − লোন নিয়েছি। <span class="pos">ধনাত্মক = আমি পাবো</span>, <span class="neg">ঋণাত্মক = আমি দেবো</span>।</p>
+    </div>
+  </section>
+</main>
+</div>
+
+<script>
+const SQL=`create table if not exists loan_transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  person_name text not null,
+  txn_date date not null default current_date,
+  loan_taken numeric(14,2) not null default 0,
+  loan_given numeric(14,2) not null default 0,
+  note text,
+  created_at timestamptz default now()
+);
+alter table loan_transactions enable row level security;
+create policy "own rows" on loan_transactions for all
+  using (auth.uid()=user_id) with check (auth.uid()=user_id);`;
+const $=i=>document.getElementById(i);
+const g=k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}};
+const s=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const esc=t=>String(t??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=n=>Number(n).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:2});
+let sb=null,rows=[],sel=null,editId=null;
+$("sql").textContent=SQL;
+
+function show(id){["setup","auth","app"].forEach(x=>$(x).classList.toggle("hide",x!==id))}
+function init(){
+  const u=g("sb_url"),k=g("sb_key");
+  if(!u||!k){show("setup");return}
+  sb=supabase.createClient(u,k);
+  sb.auth.getSession().then(({data})=>{data.session?start(data.session.user):show("auth")});
+}
+function saveCfg(){const u=$("cu").value.trim(),k=$("ck").value.trim();if(!u||!k)return alert("URL ও Key দিন");s("sb_url",u);s("sb_key",k);init()}
+function resetCfg(){show("setup")}
+async function login(){const{error}=await sb.auth.signInWithPassword({email:$("em").value,password:$("pw").value});if(error)$("am").textContent=error.message;else init()}
+async function signup(){const{data,error}=await sb.auth.signUp({email:$("em").value,password:$("pw").value});$("am").textContent=error?error.message:(data.session?"":"ইমেইলে কনফার্মেশন লিংক গেছে (চালু থাকলে), তারপর লগইন করুন।");if(data&&data.session)init()}
+async function logout(){await sb.auth.signOut();show("auth")}
+async function start(user){show("app");$("ue").textContent=user.email;$("fd").value=new Date().toISOString().slice(0,10);await load()}
+
+async function load(){
+  const{data,error}=await sb.from("loan_transactions").select("*").order("txn_date").order("created_at");
+  if(error){alert("লোড ব্যর্থ: "+error.message+"\n(SQL টেবিল তৈরি করেছেন তো?)");return}
+  rows=data;render();
+}
+function calc(){
+  const run={},people={};
+  rows.forEach(r=>{
+    const t=+r.loan_taken,gv=+r.loan_given,n=r.person_name;
+    run[n]=(run[n]||0)+gv-t;r._bal=run[n];
+    const p=people[n]||(people[n]={taken:0,given:0,bal:0,c:0});
+    p.taken+=t;p.given+=gv;p.bal=run[n];p.c++;
+  });
+  return people;
+}
+function render(){
+  const people=calc(),q=$("ps").value.trim().toLowerCase();
+  $("names").innerHTML=Object.keys(people).map(n=>`<option value="${esc(n)}">`).join("");
+  const list=Object.keys(people).filter(n=>n.toLowerCase().includes(q)).sort((a,b)=>a.localeCompare(b));
+  $("plist").innerHTML=list.map(n=>`<div class="p ${n===sel?"on":""}" onclick="pick(this.dataset.n)" data-n="${esc(n)}"><span>${esc(n)}</span><b class="${people[n].bal>=0?"pos":"neg"}">${fmt(people[n].bal)}</b></div>`).join("")||'<p class="m">কোনো ব্যক্তি নেই</p>';
+  const view=rows.filter(r=>sel?r.person_name===sel:(!q||r.person_name.toLowerCase().includes(q)));
+  const T=view.reduce((a,r)=>a+ +r.loan_taken,0),G=view.reduce((a,r)=>a+ +r.loan_given,0),B=G-T;
+  $("sum").innerHTML=`<div>মোট নিয়েছি<b>${fmt(T)}</b></div><div>মোট দিয়েছি<b>${fmt(G)}</b></div><div>নেট ব্যালেন্স<b class="${B>=0?"pos":"neg"}">${fmt(B)}</b>${B>=0?"আমি পাবো":"আমি দেবো"}</div>`;
+  $("tt").textContent=sel?("লেনদেন: "+sel):"সব লেনদেন";
+  $("tb").innerHTML=[...view].reverse().map(r=>`<tr><td>${esc(r.txn_date)}</td><td>${esc(r.person_name)}</td><td class="r">${+r.loan_taken?fmt(r.loan_taken):"-"}</td><td class="r">${+r.loan_given?fmt(r.loan_given):"-"}</td><td class="r ${r._bal>=0?"pos":"neg"}"><b>${fmt(r._bal)}</b></td><td class="n">${esc(r.note)}</td><td><button class="s" onclick="edit('${r.id}')">✎</button> <button class="d" onclick="del('${r.id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="7" class="m">কোনো লেনদেন নেই</td></tr>';
+}
+function pick(n){sel=n;$("fn").value=n;render()}
+function clearForm(){editId=null;["fn","ft2","fg","fo"].forEach(i=>$(i).value="");$("fd").value=new Date().toISOString().slice(0,10);$("ft").textContent="নতুন লেনদেন";$("fm").textContent=""}
+async function saveTxn(){
+  const name=$("fn").value.trim(),t=+$("ft2").value||0,gv=+$("fg").value||0;
+  if(!name)return $("fm").textContent="নাম দিন";
+  if(t<=0&&gv<=0)return $("fm").textContent="লোন নিয়েছি বা দিয়েছি — একটিতে পরিমাণ দিন";
+  const rec={person_name:name,txn_date:$("fd").value,loan_taken:t,loan_given:gv,note:$("fo").value.trim()||null};
+  const{error}=editId?await sb.from("loan_transactions").update(rec).eq("id",editId):await sb.from("loan_transactions").insert(rec);
+  if(error)return $("fm").textContent="ত্রুটি: "+error.message;
+  const keep=name;clearForm();sel=keep;await load();$("fm").textContent="✔ সেভ হয়েছে";
+}
+function edit(id){const r=rows.find(x=>x.id===id);editId=id;$("fn").value=r.person_name;$("fd").value=r.txn_date;$("ft2").value=+r.loan_taken||"";$("fg").value=+r.loan_given||"";$("fo").value=r.note||"";$("ft").textContent="লেনদেন এডিট";scrollTo({top:0,behavior:"smooth"})}
+async function del(id){if(!confirm("এই লেনদেন মুছবেন?"))return;const{error}=await sb.from("loan_transactions").delete().eq("id",id);if(error)alert(error.message);else load()}
+function dl(one){
+  calc();
+  const data=one&&sel?rows.filter(r=>r.person_name===sel):rows;
+  if(one&&!sel)return alert("আগে তালিকা থেকে একজন ব্যক্তি সিলেক্ট করুন");
+  const q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
+  const csv=["তারিখ,নাম,লোন নিয়েছি,লোন দিয়েছি,ব্যালেন্স,নোট",...data.map(r=>[r.txn_date,r.person_name,r.loan_taken,r.loan_given,r._bal,r.note].map(q).join(","))].join("\r\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}));
+  a.download=(one?sel:"all-loans")+"-"+new Date().toISOString().slice(0,10)+".csv";a.click();
+}
+init();
+</script>
+</body>
+</html>
