@@ -39,6 +39,7 @@ tfoot td{font-weight:700;background:linear-gradient(90deg,#efe9ff,#e3f0ff);borde
 .m{color:var(--mut);font-size:12px}.hide{display:none}
 #auth,#setup{max-width:520px;margin:40px auto}pre{background:#f1eeff;padding:10px;border-radius:9px;overflow:auto;font-size:12px}
 dialog{border:0;border-radius:18px;padding:20px;width:min(480px,94vw);box-shadow:0 20px 60px #0006}dialog::backdrop{background:#1b0f4a88;backdrop-filter:blur(3px)}
+.wide{width:min(840px,96vw);max-height:88vh;overflow:auto}.bd{color:#fff;padding:2px 9px;border-radius:20px;font-size:12px;white-space:nowrap}
 .fab{position:fixed;right:22px;bottom:22px;width:auto;border-radius:30px;padding:13px 22px;font-size:16px;box-shadow:0 10px 26px #0005;z-index:5}
 </style>
 </head>
@@ -50,6 +51,7 @@ dialog{border:0;border-radius:18px;padding:20px;width:min(480px,94vw);box-shadow
   <p><button onclick="saveCfg()">সেভ করুন</button></p>
   <h2>২) নতুন হলে — টেবিল তৈরি</h2><pre id="sql"></pre>
   <h2>৩) আগের টেবিল থাকলে — শুধু এটি Run করুন</h2><pre id="mig"></pre>
+  <h2>৪) রিসাইকেল বিন + অ্যাক্টিভিটি লগ — একবার Run করুন</h2><pre id="sec"></pre>
 </div>
 
 <div id="auth" class="card hide">
@@ -61,7 +63,7 @@ dialog{border:0;border-radius:18px;padding:20px;width:min(480px,94vw);box-shadow
 </div>
 
 <div id="app" class="hide">
-<header><h1>💰 লোন ম্যানেজমেন্ট</h1><div><span class="m" id="ue"></span> <button class="s" onclick="logout()">লগআউট</button></div></header>
+<header><h1>💰 লোন ম্যানেজমেন্ট</h1><div><span class="m" id="ue"></span> <button class="s" onclick="openTrash()">🗑 বিন (<span id="tc">0</span>)</button> <button class="s" onclick="openLog()">📜 লগ</button> <button class="s" onclick="logout()">লগআউট</button></div></header>
 <div class="wrap">
   <div class="stats" id="sum"></div>
   <div class="layout">
@@ -108,6 +110,20 @@ dialog{border:0;border-radius:18px;padding:20px;width:min(480px,94vw);box-shadow
   <p class="row"><button onclick="saveTxn()">সেভ</button><button class="s" onclick="$('dlg').close()">বন্ধ</button></p>
   <p class="m" id="fm"></p>
 </dialog>
+
+<dialog id="tdlg" class="wide">
+  <h2>🗑 রিসাইকেল বিন</h2>
+  <p class="m">মুছে ফেলা লেনদেন এখানে জমা থাকে এবং হিসাবে ধরা হয় না। "ফেরত" দিলে আবার হিসাবে ফিরবে।</p>
+  <div class="tw"><table><thead><tr><th>তারিখ</th><th>নাম</th><th class="r">নিয়েছি</th><th class="r">দিয়েছি</th><th>নোট</th><th>মুছেছেন</th><th></th></tr></thead><tbody id="trb"></tbody></table></div>
+  <p><button class="s" onclick="$('tdlg').close()">বন্ধ</button></p>
+</dialog>
+
+<dialog id="ldlg" class="wide">
+  <h2>📜 অ্যাক্টিভিটি লগ</h2>
+  <p class="m">সব যোগ, এডিট, ডিলিট ও ফেরত আনার ইতিহাস (সর্বশেষ ৩০০টি)। এই লগ অ্যাপ থেকে বদলানো বা মোছা যায় না।</p>
+  <div class="tw"><table><thead><tr><th>সময়</th><th>কাজ</th><th>বিবরণ</th></tr></thead><tbody id="lgb"></tbody></table></div>
+  <p><button class="s" onclick="$('ldlg').close()">বন্ধ</button></p>
+</dialog>
 </div>
 
 <script>
@@ -131,6 +147,53 @@ const MIG=`alter table loan_transactions
   add column if not exists phone text,
   add column if not exists due_date date,
   add column if not exists due_done boolean not null default false;`;
+const SEC=`alter table loan_transactions add column if not exists deleted_at timestamptz;
+
+create table if not exists loan_activity_log (
+  id bigserial primary key,
+  user_id uuid not null,
+  action text not null,
+  txn_id uuid,
+  person_name text,
+  old_data jsonb,
+  new_data jsonb,
+  created_at timestamptz not null default now()
+);
+alter table loan_activity_log enable row level security;
+drop policy if exists "read own log" on loan_activity_log;
+create policy "read own log" on loan_activity_log
+  for select using (auth.uid()=user_id);
+
+create or replace function log_loan_change() returns trigger
+language plpgsql security definer set search_path=public as $$
+declare act text;
+begin
+  if tg_op='INSERT' then
+    insert into loan_activity_log(user_id,action,txn_id,person_name,new_data)
+    values(new.user_id,'add',new.id,new.person_name,to_jsonb(new));
+    return new;
+  elsif tg_op='UPDATE' then
+    act := case
+      when old.deleted_at is null and new.deleted_at is not null then 'trash'
+      when old.deleted_at is not null and new.deleted_at is null then 'restore'
+      when (to_jsonb(old)-'due_done')=(to_jsonb(new)-'due_done') then 'done'
+      else 'edit' end;
+    insert into loan_activity_log(user_id,action,txn_id,person_name,old_data,new_data)
+    values(new.user_id,act,new.id,new.person_name,to_jsonb(old),to_jsonb(new));
+    return new;
+  else
+    insert into loan_activity_log(user_id,action,txn_id,person_name,old_data)
+    values(old.user_id,'delete',old.id,old.person_name,to_jsonb(old));
+    return old;
+  end if;
+end $$;
+drop trigger if exists loan_log on loan_transactions;
+create trigger loan_log after insert or update or delete on loan_transactions
+  for each row execute function log_loan_change();
+
+create or replace function public.ping() returns timestamptz
+language sql security definer set search_path=public as $$ select now() $$;
+grant execute on function public.ping() to anon, authenticated;`;
 const $=i=>document.getElementById(i);
 const g=k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}};
 const s=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
@@ -140,8 +203,8 @@ const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOStr
 const left=d=>Math.round((new Date(d+"T00:00:00")-new Date(today()+"T00:00:00"))/864e5);
 const dig=p=>{const d=String(p||"").replace(/\D/g,"");return d.length>=7?d.slice(-10):""};
 const nn=n=>String(n||"").trim().toLowerCase().replace(/\s+/g," ");
-let sb=null,rows=[],sel=null,editId=null,PE={},NK={};
-$("sql").textContent=SQL;$("mig").textContent=MIG;
+let sb=null,rows=[],TR=[],sel=null,editId=null,PE={},NK={};
+$("sql").textContent=SQL;$("mig").textContent=MIG;$("sec").textContent=SEC;
 
 function show(id){["setup","auth","app"].forEach(x=>$(x).classList.toggle("hide",x!==id))}
 function init(){
@@ -159,7 +222,7 @@ async function start(u){show("app");$("ue").textContent=u.email;$("so").value=g(
 async function load(){
   const{data,error}=await sb.from("loan_transactions").select("*").order("txn_date").order("created_at");
   if(error){alert("লোড ব্যর্থ: "+error.message);return}
-  rows=data;render();
+  TR=data.filter(r=>r.deleted_at);rows=data.filter(r=>!r.deleted_at);$("tc").textContent=TR.length;render();
 }
 function keyOf(name,phone){const p=dig(phone);return p?"p:"+p:(NK[nn(name)]||"n:"+nn(name))}
 function calc(){
@@ -215,8 +278,37 @@ async function saveTxn(){
   $("dlg").close();await load();sel=keyOf(name,ph);render();
 }
 function edit(id){const r=rows.find(x=>x.id===id);clearForm();editId=id;$("fp").value=r._k;$("fn").value=r.person_name;$("fh").value=r.phone||"";$("fd").value=r.txn_date;$("ft2").value=+r.loan_taken||"";$("fg").value=+r.loan_given||"";$("fo").value=r.note||"";$("fu").value=r.due_date||"";$("ft").textContent="লেনদেন এডিট";$("dlg").showModal()}
-async function del(id){if(!confirm("এই লেনদেন মুছবেন?"))return;const{error}=await sb.from("loan_transactions").delete().eq("id",id);if(error)alert(error.message);else load()}
+async function del(id){if(!confirm("এই লেনদেন রিসাইকেল বিনে পাঠাবেন? (পরে ফেরত আনা যাবে)"))return;const{error}=await sb.from("loan_transactions").update({deleted_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message+"\n\nআগে Supabase SQL Editor-এ রিসাইকেল বিন/লগের SQL Run করুন (সেটআপ পেজের ৪ নম্বর)।");return}load()}
 async function done(id){const{error}=await sb.from("loan_transactions").update({due_done:true}).eq("id",id);if(error)alert(error.message);else load()}
+const tm=t=>new Date(t).toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"});
+function openTrash(keep){
+  $("trb").innerHTML=[...TR].sort((a,b)=>String(b.deleted_at).localeCompare(String(a.deleted_at))).map(r=>`<tr><td>${esc(r.txn_date)}</td><td>${esc(r.person_name)}${r.phone?`<small>${esc(r.phone)}</small>`:""}</td><td class="r">${+r.loan_taken?fmt(r.loan_taken):"-"}</td><td class="r">${+r.loan_given?fmt(r.loan_given):"-"}</td><td class="n">${esc(r.note)}</td><td>${esc(tm(r.deleted_at))}</td><td><button class="g" onclick="trashOp('${r.id}','restore')">↩ ফেরত</button> <button class="d" onclick="trashOp('${r.id}','purge')">✕</button></td></tr>`).join("")||'<tr><td colspan="7" class="m">রিসাইকেল বিন খালি</td></tr>';
+  if(keep!==true)$("tdlg").showModal();
+}
+async function trashOp(id,op){
+  let r;
+  if(op==="restore")r=await sb.from("loan_transactions").update({deleted_at:null}).eq("id",id);
+  else{if(!confirm("স্থায়ীভাবে মুছে ফেলবেন? এটি আর ফেরত আনা যাবে না (শুধু লগে থাকবে)।"))return;r=await sb.from("loan_transactions").delete().eq("id",id)}
+  if(r.error)return alert(r.error.message);
+  await load();openTrash(true);
+}
+const ACT={add:["যোগ","#0f9d6b"],edit:["এডিট","#2f7bff"],trash:["বিনে পাঠানো","#f7971e"],restore:["ফেরত আনা","#6a3df0"],delete:["স্থায়ী মুছে ফেলা","#e5384f"],done:["সম্পন্ন চিহ্নিত","#11998e"]};
+const FL={person_name:"নাম",phone:"ফোন",txn_date:"তারিখ",loan_taken:"নিয়েছি",loan_given:"দিয়েছি",note:"নোট",due_date:"ফেরতের তারিখ"};
+function detail(l){
+  const d=l.new_data||l.old_data||{};
+  let t=`${esc(d.person_name)} · ${esc(d.txn_date)} · ${+d.loan_taken?"নিয়েছি "+fmt(d.loan_taken):"দিয়েছি "+fmt(d.loan_given)}`;
+  if(l.action==="edit"&&l.old_data&&l.new_data){
+    const ch=Object.keys(FL).filter(f=>String(l.old_data[f]??"")!==String(l.new_data[f]??"")).map(f=>`${FL[f]}: ${esc(l.old_data[f]??"-")} → ${esc(l.new_data[f]??"-")}`);
+    if(ch.length)t+=`<small>${ch.join(" | ")}</small>`;
+  }
+  return t;
+}
+async function openLog(){
+  $("lgb").innerHTML='<tr><td colspan="3" class="m">লোড হচ্ছে…</td></tr>';$("ldlg").showModal();
+  const{data,error}=await sb.from("loan_activity_log").select("*").order("created_at",{ascending:false}).limit(300);
+  if(error){$("lgb").innerHTML=`<tr><td colspan="3" class="neg">লগ লোড হয়নি: ${esc(error.message)} (সেটআপের ৪ নম্বর SQL Run করেছেন?)</td></tr>`;return}
+  $("lgb").innerHTML=data.map(l=>{const a=ACT[l.action]||[l.action,"#666"];return `<tr><td>${esc(tm(l.created_at))}</td><td><span class="bd" style="background:${a[1]}">${a[0]}</span></td><td class="n">${detail(l)}</td></tr>`}).join("")||'<tr><td colspan="3" class="m">কোনো কার্যক্রম নেই</td></tr>';
+}
 function dl(one){
   if(one&&!sel)return alert("আগে তালিকা থেকে একজন ব্যক্তি সিলেক্ট করুন");
   const data=ordered(one?filtered():rows);
